@@ -1,0 +1,22 @@
+{
+  "name": "tg-bot-steps-competition",
+  "version": "1.0.0",
+  "description": "бот для соревнования по шагам",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "author": "toffee <antoinette.zu@icloud.com>",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "node-telegram-bot-api": "^0.61.0",
+    "sqlite-sync": "^0.3.9"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "packageManager": "yarn@1.22.17"
+}
