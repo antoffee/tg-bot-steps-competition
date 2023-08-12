@@ -1,12 +1,10 @@
-"use strict";
-
 import TelegramBot from "node-telegram-bot-api";
 
 import { config } from "dotenv";
+import { sql } from "@vercel/postgres";
+import { VercelRequest, VercelResponse } from "@vercel/node";
 
-import sqlite from "sqlite-sync";
-
-function getMonday(d) {
+function getMonday(d: Date) {
   d = new Date(d);
   var day = d.getDay(),
     diff = d.getDate() - day + (day == 0 ? -6 : 1); // adjust when day is sunday
@@ -18,50 +16,50 @@ config();
 // replace the value below with the Telegram token you receive from @BotFather
 const token = process.env.TELEGRAM_API_TOKEN;
 
-// ?
-sqlite.connect("/tmp/results.db");
+const updateOrInsert = async (data: Record<string, string | number>) => {
+  const { rowCount } =
+    await sql`UPDATE results SET username = ${data.username}, steps = ${data.steps}, date = ${data.date} WHERE username = ${data.username} AND date = ${data.date}`;
+  // update(
+  //   "results",
+  //   {
+  //     username: data.username,
+  //     steps: data.steps,
+  //     date: data.date,
+  //   },
+  //   { username: data.username, date: data.date }
+  // );
 
-sqlite.run(
-  `CREATE TABLE IF NOT EXISTS results(
-  id  INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT NOT NULL,
-  steps INTEGER NOT NULL,
-  date TEXT NOT NULL,
-  CONSTRAINT uq_user_date UNIQUE (username, date)
-);`,
-  function (res) {
-    if (res?.error) throw res.error;
-  }
-);
+  if (rowCount) return;
+  await sql`INSERT INTO results (username, steps, date) VALUES (${data.username}, ${data.steps}, ${data.date} )`;
 
-const updateOrInsert = (data) => {
-  const rowsUpdated = sqlite.update(
-    "results",
-    {
-      username: data.username,
-      steps: data.steps,
-      date: data.date,
-    },
-    { username: data.username, date: data.date }
-  );
-
-  if (rowsUpdated) return;
-
-  sqlite.insert("results", {
-    username: data.username,
-    steps: data.steps,
-    date: data.date,
-  });
+  // sqlite.insert("results", {
+  //   username: data.username,
+  //   steps: data.steps,
+  //   date: data.date,
+  // });
 };
 
 const ALLOWED_USERS = (process.env.TG_USERNAMES_SECRET ?? "").split(",");
 
-const regStemsSet = {};
+const regStemsSet = new Set();
 const editStepsMap = new Map();
-
-export default async (request, response) => {
+let flag = true;
+export default async (request: VercelRequest, response: VercelResponse) => {
   // Create a bot that uses 'polling' to fetch new updates
-  const bot = new TelegramBot(token, { polling: true });
+  const bot = new TelegramBot(token!, { polling: true });
+
+  if (flag) {
+    await sql`CREATE TABLE IF NOT EXISTS results(
+      id INTEGER PRIMARY KEY,
+      username TEXT NOT NULL,
+      steps INTEGER NOT NULL,
+      date TEXT NOT NULL
+      );`
+      .catch(console.error)
+      .then(() => {
+        flag = false;
+      });
+  }
 
   bot.setMyCommands([
     { command: "/reg_steps", description: "Записать шаги" },
@@ -103,9 +101,10 @@ export default async (request, response) => {
             chatId,
             "Привет! Это бот для составления топа по количеству шагов. Он считает даты только в таймзоне +3 (МСК), это влияет на сопоставления времени отправки сообщения и даты в базе данных"
           );
+          return;
         }
         case "/reg_steps": {
-          regStemsSet[msgUsername] = true;
+          regStemsSet.add(msgUsername);
           await bot.sendMessage(
             chatId,
             "Отправьте свои шаги за сегодняшний день числом без дополнительных символов. Если вы не хотите записывать шаги, напишите /cancel"
@@ -121,9 +120,8 @@ export default async (request, response) => {
           return;
         }
         case "/top_all": {
-          const data = sqlite.run(
-            "SELECT SUM (steps) as sum, username FROM results GROUP BY username ORDER BY sum DESC"
-          );
+          const { rows: data } =
+            await sql`SELECT SUM (steps) as sum, username FROM results GROUP BY username ORDER BY sum DESC`;
           if (data.length) {
             await bot.sendMessage(
               chatId,
@@ -144,9 +142,8 @@ export default async (request, response) => {
         case "/top_week": {
           const todayMSK = new Date(date * 1000 + 3 * 60 * 60 * 1000);
           const mondayOfWeek = getMonday(todayMSK).toISOString().split("T")[0];
-          const data = sqlite.run(
-            `SELECT SUM(steps) AS sum,username FROM results WHERE id in(SELECT id FROM results WHERE date >= '${mondayOfWeek}') GROUP BY username ORDER by sum DESC`
-          );
+          const { rows: data } =
+            await sql`SELECT SUM(steps) AS sum,username FROM results WHERE id in(SELECT id FROM results WHERE date >= '${mondayOfWeek}') GROUP BY username ORDER by sum DESC`;
           if (data.length) {
             await bot.sendMessage(
               chatId,
@@ -165,15 +162,15 @@ export default async (request, response) => {
           return;
         }
         case "/cancel": {
-          delete regStemsSet[msgUsername];
+          regStemsSet.delete(msgUsername);
           editStepsMap.delete(msgUsername);
           await bot.sendMessage(chatId, "Отменено");
           return;
         }
         case "/my_steps": {
-          const data = sqlite.run(
-            `SELECT steps, username, date FROM results WHERE username = '${msgUsername}' ORDER BY date`
-          );
+          const { rows: data } =
+            await sql`SELECT steps, username, date FROM results WHERE username = ${msgUsername} ORDER BY date`;
+
           if (data.length) {
             await bot.sendMessage(
               chatId,
@@ -190,7 +187,7 @@ export default async (request, response) => {
           return;
         }
         default: {
-          if (regStemsSet[msgUsername] && Number(text)) {
+          if (regStemsSet.has(msgUsername) && Number(text)) {
             const steps = Number(text);
             if (steps < 0 || steps > 150000) {
               await bot.sendSticker(
@@ -199,18 +196,18 @@ export default async (request, response) => {
               );
               return;
             }
-            updateOrInsert({
+            await updateOrInsert({
               username: msgUsername,
-              steps: steps,
+              stexps: steps,
               date: new Date(date * 1000 + 3 * 60 * 60 * 1000)
                 .toISOString()
                 .split("T")[0],
             });
             bot.sendMessage(chatId, "Ваши результаты записаны");
-            delete regStemsSet[msgUsername];
+            regStemsSet.delete(msgUsername);
 
             return;
-          } else if (regStemsSet[msgUsername]) {
+          } else if (regStemsSet.has(msgUsername)) {
             await bot.sendMessage(
               chatId,
               "Кажется, вы отправили что-то некорректное. Ожидалось количество шагов числом без дополнительных символов."
@@ -257,14 +254,14 @@ export default async (request, response) => {
         }
       }
     } else {
-      console.error({ request, response });
-      response.send(request);
+      response.send("OK");
     }
   } catch (error) {
     // If there was an error sending our message then we
     // can log it into the Vercel console
     console.error("Error sending message");
-    console.log(error.toString());
+    console.log((error as Error).toString());
+    response.status(500).send({ error: (error as Error).toString() });
   }
 
   // Acknowledge the message with Telegram

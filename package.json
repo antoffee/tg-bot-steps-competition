@@ -5,16 +5,19 @@
   "main": "index.html",
   "type": "module",
   "scripts": {
+    "build": "tsc"
   },
   "author": "antoffee <antoinette.zu@icloud.com>",
   "license": "ISC",
   "dependencies": {
+    "@vercel/postgres": "^0.4.1",
     "dotenv": "^16.3.1",
-    "node-telegram-bot-api": "^0.61.0",
-    "sqlite-sync": "^0.3.9"
+    "node-telegram-bot-api": "^0.61.0"
   },
   "devDependencies": {
+    "@types/node-telegram-bot-api": "^0.61.7",
     "nodemon": "^3.0.1",
+    "typescript": "^5.1.6",
     "vercel": "^31.2.2"
   },
   "packageManager": "yarn@1.22.17"
